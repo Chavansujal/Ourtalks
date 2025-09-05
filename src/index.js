@@ -4,7 +4,7 @@ import "./index.css";
 import { io } from "socket.io-client";
 
 // ✅ Connect to backend
-const socket = io("https://ourtalks-backend.onrender.com", {
+const socket = io("http://localhost:5000", {
   transports: ["websocket", "polling"],
 });
 
