@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import io from "socket.io-client";
 import axios from "axios";
 
-const socket = io("http://localhost:5000");
+const socket = io("https://ourtalks-backend.onrender.com");
 
 function App() {
   const [user, setUser] = useState(null); // Logged-in user
