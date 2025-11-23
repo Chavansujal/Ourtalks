@@ -14,13 +14,11 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connect
-mongoose.connect("mongodb://localhost:27017/ourtalksdb", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log("✅ MongoDB Connected"))
-.catch((err) => console.error("❌ MongoDB Connection Error:", err));
+// ================== MONGODB CONNECT FIXED ==================
+
+mongoose.connect("mongodb+srv://ourtalksDB:Pc12zfdmg97kTrSd@cluster0.osothtt.mongodb.net/ourtalks")
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.error("❌ MongoDB Connection Error:", err));
 
 // ================== MODELS ==================
 const UserSchema = new mongoose.Schema({
@@ -59,7 +57,6 @@ app.post("/signup", async (req, res) => {
     const user = new User({ name, email, password: hashed });
     const savedUser = await user.save();
 
-    // ✅ Emit new user to all connected clients (without password)
     const safeUser = { _id: savedUser._id, name: savedUser.name, email: savedUser.email };
     io.emit("newUser", safeUser);
 
@@ -94,7 +91,7 @@ app.post("/login", async (req, res) => {
   }
 });
 
-// Fetch all users (except current user)
+// Fetch users
 app.get("/users/:id", async (req, res) => {
   try {
     const users = await User.find({ _id: { $ne: req.params.id } });
@@ -104,7 +101,7 @@ app.get("/users/:id", async (req, res) => {
   }
 });
 
-// Fetch chat messages between two users
+// Fetch messages
 app.get("/chat/:userId/:otherId", async (req, res) => {
   try {
     const { userId, otherId } = req.params;
