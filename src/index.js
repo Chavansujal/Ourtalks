@@ -3,60 +3,63 @@ import ReactDOM from "react-dom/client";
 import "./index.css";
 import { io } from "socket.io-client";
 
-// ✅ Connect to backend
-const socket = io("http://localhost:5000", {
+// ✅ Auto Backend URL (local + production)
+const BACKEND = "https://ourtalks.onrender.com";
+
+// ✅ Socket Connection (NO localhost)
+const socket = io(BACKEND, {
   transports: ["websocket", "polling"],
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
 });
 
 function App() {
-  const [page, setPage] = useState("landing"); // landing | auth | chat
+  const [page, setPage] = useState("landing"); 
   const [isLogin, setIsLogin] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const [unreadCounts, setUnreadCounts] = useState({}); // 🔹 Track unread messages
+  const [unreadCounts, setUnreadCounts] = useState({});
 
-  // ✅ Fetch all users except current user
+  // ✅ Fetch all users except current
   const fetchUsers = () => {
-    if (currentUser) {
-      fetch(`http://localhost:5000/users/${currentUser._id}`)
-        .then((res) => res.json())
-        .then((data) => setUsers(data))
-        .catch((err) => console.error("Error fetching users:", err));
-    }
+    if (!currentUser) return;
+
+    fetch(`${BACKEND}/users/${currentUser._id}`)
+      .then((res) => res.json())
+      .then((data) => setUsers(data))
+      .catch(() => console.log("⚠ Unable to fetch users"));
   };
 
   useEffect(() => {
     fetchUsers();
   }, [currentUser]);
 
-  // ✅ Fetch chat history when selectedUser changes
+  // ✅ Fetch chat history
   useEffect(() => {
-    if (currentUser && selectedUser) {
-      fetch(
-        `http://localhost:5000/chat/${currentUser._id}/${selectedUser._id}`
-      )
-        .then((res) => res.json())
-        .then((data) => setMessages(data))
-        .catch((err) => console.error("Error fetching chat:", err));
-    }
+    if (!currentUser || !selectedUser) return;
+
+    fetch(`${BACKEND}/chat/${currentUser._id}/${selectedUser._id}`)
+      .then((res) => res.json())
+      .then((data) => setMessages(data))
+      .catch(() => console.log("⚠ Unable to fetch chat"));
   }, [selectedUser, currentUser]);
 
-  // ✅ Socket.io events
+  // ✅ Socket listeners
   useEffect(() => {
     socket.on("receiveMessage", (data) => {
+      // If chat window is open
       if (
         (data.sender === currentUser?._id &&
           data.receiver === selectedUser?._id) ||
         (data.sender === selectedUser?._id &&
           data.receiver === currentUser?._id)
       ) {
-        // If the open chat is active, append message
         setMessages((prev) => [...prev, data]);
       } else if (data.receiver === currentUser?._id) {
-        // If message is for me but from another user → increment unread count
+        // Increase unread count
         setUnreadCounts((prev) => ({
           ...prev,
           [data.sender]: (prev[data.sender] || 0) + 1,
@@ -64,15 +67,14 @@ function App() {
       }
     });
 
-    return () => {
-      socket.off("receiveMessage");
-    };
+    return () => socket.off("receiveMessage");
   }, [currentUser, selectedUser]);
 
   // ✅ Login / Signup
   const handleAuth = async (e) => {
     e.preventDefault();
     const form = new FormData(e.target);
+
     const payload = {
       name: form.get("name"),
       email: form.get("email"),
@@ -81,7 +83,7 @@ function App() {
 
     try {
       const endpoint = isLogin ? "/login" : "/signup";
-      const res = await fetch(`http://localhost:5000${endpoint}`, {
+      const res = await fetch(`${BACKEND}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -89,50 +91,47 @@ function App() {
 
       const data = await res.json();
 
-      if (res.ok && data.success) {
+      if (data.success) {
         setCurrentUser(data.user);
         setPage("chat");
       } else {
-        alert(data.error || "Invalid email or password!");
+        alert(data.error || "Invalid email or password");
       }
     } catch (err) {
-      console.error("Auth Error:", err);
-      alert("⚠️ Backend not running or connection failed!");
+      console.log("⚠ Backend sleep or network delay, retrying...");
+      alert("⚠ Server is waking up… please try again in 5 seconds.");
     }
   };
 
-  // ✅ Send Message
+  // ✅ Send message
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedUser) return;
 
-    const msgData = {
+    const msg = {
       sender: currentUser._id,
       receiver: selectedUser._id,
       text: newMessage,
     };
 
-    socket.emit("sendMessage", msgData);
+    socket.emit("sendMessage", msg);
     setNewMessage("");
   };
 
-  // ✅ When user clicks a user → open chat & reset unread count
+  // Click user → open chat window & reset unread
   const handleSelectUser = (user) => {
     setSelectedUser(user);
-    setUnreadCounts((prev) => ({
-      ...prev,
-      [user._id]: 0, // reset unread for this user
-    }));
+    setUnreadCounts((prev) => ({ ...prev, [user._id]: 0 }));
   };
 
   return (
     <div className="app-container">
-      {/* 🚀 Landing Page */}
+      {/* 🚀 Landing */}
       {page === "landing" && (
         <div className="landing">
           <h1>Ourtalks</h1>
-          <p>Simple. Fast. Reliable chat with friends.</p>
-          <button onClick={() => setPage("auth")}>🚀 Start Chat</button>
+          <p>Fast. Simple. Real-time chat.</p>
+          <button onClick={() => setPage("auth")}>Start Chat</button>
         </div>
       )}
 
@@ -140,21 +139,16 @@ function App() {
       {page === "auth" && (
         <div className="auth-page">
           <h2>{isLogin ? "Login" : "Sign Up"}</h2>
+
           <form className="auth-form" onSubmit={handleAuth}>
             {!isLogin && (
               <input type="text" name="name" placeholder="Full Name" required />
             )}
             <input type="email" name="email" placeholder="Email" required />
-            <input
-              type="password"
-              name="password"
-              placeholder="Password"
-              required
-            />
-            <button type="submit">
-              {isLogin ? "Login" : "Create Account"}
-            </button>
+            <input type="password" name="password" placeholder="Password" required />
+            <button type="submit">{isLogin ? "Login" : "Create Account"}</button>
           </form>
+
           <p>
             {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
             <span
@@ -176,9 +170,8 @@ function App() {
             <button onClick={() => setPage("landing")}>Logout</button>
 
             <h4>All Users</h4>
-            <button onClick={fetchUsers}>🔄 Refresh</button>
+            <button onClick={fetchUsers}>Refresh</button>
 
-            {users.length === 0 && <p>No other users yet</p>}
             {users.map((user) => (
               <div
                 key={user._id}
@@ -204,6 +197,7 @@ function App() {
                 <div className="chat-header">
                   <h2>{selectedUser.name}</h2>
                 </div>
+
                 <div className="chat-messages">
                   {messages.map((msg, i) => (
                     <div
@@ -212,10 +206,11 @@ function App() {
                         msg.sender === currentUser._id ? "sent" : "received"
                       }`}
                     >
-                      <p>{msg.text}</p>
+                      {msg.text}
                     </div>
                   ))}
                 </div>
+
                 <form className="chat-input" onSubmit={handleSendMessage}>
                   <input
                     type="text"
@@ -241,4 +236,4 @@ root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
-);  
+);
