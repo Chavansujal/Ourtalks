@@ -1,249 +1,234 @@
 import React, { useState, useEffect } from "react";
-import io from "socket.io-client";
+import ReactDOM from "react-dom/client";
+import "./index.css";
+import { io } from "socket.io-client";
 
-const BACKEND_URL = "https://ourtalks.onrender.com";  // your backend URL
-
-const socket = io(BACKEND_URL, {
-  transports: ["websocket"],
-  withCredentials: true,
+// ✅ Connect to backend
+const socket = io("http://localhost:5000", {
+  transports: ["websocket", "polling"],
 });
 
 function App() {
-  const [mode, setMode] = useState("login"); // login | signup | chat
+  const [page, setPage] = useState("landing"); // landing | auth | chat
+  const [isLogin, setIsLogin] = useState(true);
+  const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
-  const [chatUser, setChatUser] = useState(null);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [unreadCounts, setUnreadCounts] = useState({}); // 🔹 Track unread messages
 
-  // Signup state
-  const [signupData, setSignupData] = useState({
-    fname: "",
-    lname: "",
-    email: "",
-    phoneNumber: "",
-    password: "",
-  });
+  // ✅ Fetch all users except current user
+  const fetchUsers = () => {
+    if (currentUser) {
+      fetch(`http://localhost:5000/users/${currentUser._id}`)
+        .then((res) => res.json())
+        .then((data) => setUsers(data))
+        .catch((err) => console.error("Error fetching users:", err));
+    }
+  };
 
-  // Login state
-  const [loginData, setLoginData] = useState({
-    email: "",
-    password: "",
-  });
-
-  // Load messages
   useEffect(() => {
-    socket.on("receiveMessage", (msg) => {
-      setMessages((prev) => [...prev, msg]);
+    fetchUsers();
+  }, [currentUser]);
+
+  // ✅ Fetch chat history when selectedUser changes
+  useEffect(() => {
+    if (currentUser && selectedUser) {
+      fetch(
+        `http://localhost:5000/chat/${currentUser._id}/${selectedUser._id}`
+      )
+        .then((res) => res.json())
+        .then((data) => setMessages(data))
+        .catch((err) => console.error("Error fetching chat:", err));
+    }
+  }, [selectedUser, currentUser]);
+
+  // ✅ Socket.io events
+  useEffect(() => {
+    socket.on("receiveMessage", (data) => {
+      if (
+        (data.sender === currentUser?._id &&
+          data.receiver === selectedUser?._id) ||
+        (data.sender === selectedUser?._id &&
+          data.receiver === currentUser?._id)
+      ) {
+        // If the open chat is active, append message
+        setMessages((prev) => [...prev, data]);
+      } else if (data.receiver === currentUser?._id) {
+        // If message is for me but from another user → increment unread count
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [data.sender]: (prev[data.sender] || 0) + 1,
+        }));
+      }
     });
 
     return () => {
       socket.off("receiveMessage");
     };
-  }, []);
+  }, [currentUser, selectedUser]);
 
-  // Fetch all users after login
-  const fetchUsers = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/user/getAllUsers`);
-      const data = await res.json();
-      if (data.success) setUsers(data.users);
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  // Signup
-  const handleSignup = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/user/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(signupData),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        alert("Signup successful! Please login.");
-        setMode("login");
-      } else {
-        alert(data.message);
-      }
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  // Login
-  const handleLogin = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/user/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(loginData),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        localStorage.setItem("user", JSON.stringify(data.user));
-        alert("Login successful!");
-        setMode("chat");
-        fetchUsers();
-      } else {
-        alert(data.message);
-      }
-    } catch (err) {
-      console.log(err);
-    }
-  };
-
-  // Send message
-  const sendMessage = () => {
-    if (!chatUser) return;
-    const messageText = document.getElementById("messageInput").value;
-
-    const msg = {
-      to: chatUser._id,
-      from: JSON.parse(localStorage.getItem("user"))._id,
-      text: messageText,
+  // ✅ Login / Signup
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    const payload = {
+      name: form.get("name"),
+      email: form.get("email"),
+      password: form.get("password"),
     };
 
-    socket.emit("sendMessage", msg);
-    setMessages((prev) => [...prev, msg]);
+    try {
+      const endpoint = isLogin ? "/login" : "/signup";
+      const res = await fetch(`http://localhost:5000${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    document.getElementById("messageInput").value = "";
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setCurrentUser(data.user);
+        setPage("chat");
+      } else {
+        alert(data.error || "Invalid email or password!");
+      }
+    } catch (err) {
+      console.error("Auth Error:", err);
+      alert("⚠️ Backend not running or connection failed!");
+    }
+  };
+
+  // ✅ Send Message
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !selectedUser) return;
+
+    const msgData = {
+      sender: currentUser._id,
+      receiver: selectedUser._id,
+      text: newMessage,
+    };
+
+    socket.emit("sendMessage", msgData);
+    setNewMessage("");
+  };
+
+  // ✅ When user clicks a user → open chat & reset unread count
+  const handleSelectUser = (user) => {
+    setSelectedUser(user);
+    setUnreadCounts((prev) => ({
+      ...prev,
+      [user._id]: 0, // reset unread for this user
+    }));
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "Arial" }}>
-      {/* Login Page */}
-      {mode === "login" && (
-        <div>
-          <h1>Login</h1>
-          <input
-            placeholder="Email"
-            value={loginData.email}
-            onChange={(e) =>
-              setLoginData({ ...loginData, email: e.target.value })
-            }
-          />
-          <br />
-          <input
-            placeholder="Password"
-            type="password"
-            value={loginData.password}
-            onChange={(e) =>
-              setLoginData({ ...loginData, password: e.target.value })
-            }
-          />
-          <br />
-          <button onClick={handleLogin}>Login</button>
-          <p onClick={() => setMode("signup")}>
-            Don’t have an account? Signup
+    <div className="app-container">
+      {/* 🚀 Landing Page */}
+      {page === "landing" && (
+        <div className="landing">
+          <h1>Ourtalks</h1>
+          <p>Simple. Fast. Reliable chat with friends.</p>
+          <button onClick={() => setPage("auth")}>🚀 Start Chat</button>
+        </div>
+      )}
+
+      {/* 🔐 Auth Page */}
+      {page === "auth" && (
+        <div className="auth-page">
+          <h2>{isLogin ? "Login" : "Sign Up"}</h2>
+          <form className="auth-form" onSubmit={handleAuth}>
+            {!isLogin && (
+              <input type="text" name="name" placeholder="Full Name" required />
+            )}
+            <input type="email" name="email" placeholder="Email" required />
+            <input
+              type="password"
+              name="password"
+              placeholder="Password"
+              required
+            />
+            <button type="submit">
+              {isLogin ? "Login" : "Create Account"}
+            </button>
+          </form>
+          <p>
+            {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
+            <span
+              style={{ color: "blue", cursor: "pointer" }}
+              onClick={() => setIsLogin(!isLogin)}
+            >
+              {isLogin ? "Sign Up" : "Login"}
+            </span>
           </p>
         </div>
       )}
 
-      {/* Signup Page */}
-      {mode === "signup" && (
-        <div>
-          <h1>Signup</h1>
-          <input
-            placeholder="First Name"
-            value={signupData.fname}
-            onChange={(e) =>
-              setSignupData({ ...signupData, fname: e.target.value })
-            }
-          />
-          <br />
-          <input
-            placeholder="Last Name"
-            value={signupData.lname}
-            onChange={(e) =>
-              setSignupData({ ...signupData, lname: e.target.value })
-            }
-          />
-          <br />
-          <input
-            placeholder="Email"
-            value={signupData.email}
-            onChange={(e) =>
-              setSignupData({ ...signupData, email: e.target.value })
-            }
-          />
-          <br />
-          <input
-            placeholder="Phone Number"
-            value={signupData.phoneNumber}
-            onChange={(e) =>
-              setSignupData({
-                ...signupData,
-                phoneNumber: e.target.value,
-              })
-            }
-          />
-          <br />
-          <input
-            placeholder="Password"
-            type="password"
-            value={signupData.password}
-            onChange={(e) =>
-              setSignupData({ ...signupData, password: e.target.value })
-            }
-          />
-          <br />
-          <button onClick={handleSignup}>Signup</button>
-          <p onClick={() => setMode("login")}>Back to Login</p>
-        </div>
-      )}
+      {/* 💬 Chat Page */}
+      {page === "chat" && (
+        <div className="chat-dashboard">
+          {/* Sidebar */}
+          <div className="chat-sidebar">
+            <h3>{currentUser?.name}</h3>
+            <button onClick={() => setPage("landing")}>Logout</button>
 
-      {/* Chat Page */}
-      {mode === "chat" && (
-        <div>
-          <h1>Your Contacts</h1>
+            <h4>All Users</h4>
+            <button onClick={fetchUsers}>🔄 Refresh</button>
 
-          <div style={{ display: "flex" }}>
-            {/* User List */}
-            <div style={{ width: "30%", borderRight: "1px solid #ccc" }}>
-              {users.map((u) => (
-                <p
-                  key={u._id}
-                  onClick={() => setChatUser(u)}
-                  style={{
-                    cursor: "pointer",
-                    padding: "10px",
-                    background:
-                      chatUser?._id === u._id ? "#eef" : "transparent",
-                  }}
-                >
-                  {u.fname} {u.lname}
-                </p>
-              ))}
-            </div>
-
-            {/* Chat Box */}
-            <div style={{ width: "70%", padding: "20px" }}>
-              <h2>
-                Chat with:{" "}
-                {chatUser ? `${chatUser.fname} ${chatUser.lname}` : "Select a user"}
-              </h2>
-
+            {users.length === 0 && <p>No other users yet</p>}
+            {users.map((user) => (
               <div
-                style={{
-                  height: "300px",
-                  overflowY: "scroll",
-                  border: "1px solid #ddd",
-                  padding: "10px",
-                }}
+                key={user._id}
+                className={`user-item ${
+                  selectedUser?._id === user._id ? "active" : ""
+                }`}
+                onClick={() => handleSelectUser(user)}
               >
-                {messages.map((m, i) => (
-                  <p key={i} style={{ textAlign: m.from === JSON.parse(localStorage.getItem("user"))._id ? "right" : "left" }}>
-                    {m.text}
-                  </p>
-                ))}
+                <p>
+                  {user.name}
+                  {unreadCounts[user._id] > 0 && (
+                    <span className="unread-badge">{unreadCounts[user._id]}</span>
+                  )}
+                </p>
               </div>
+            ))}
+          </div>
 
-              <input id="messageInput" placeholder="Type your message..." />
-              <button onClick={sendMessage}>Send</button>
-            </div>
+          {/* Chat Window */}
+          <div className="chat-window">
+            {selectedUser ? (
+              <>
+                <div className="chat-header">
+                  <h2>{selectedUser.name}</h2>
+                </div>
+                <div className="chat-messages">
+                  {messages.map((msg, i) => (
+                    <div
+                      key={i}
+                      className={`message ${
+                        msg.sender === currentUser._id ? "sent" : "received"
+                      }`}
+                    >
+                      <p>{msg.text}</p>
+                    </div>
+                  ))}
+                </div>
+                <form className="chat-input" onSubmit={handleSendMessage}>
+                  <input
+                    type="text"
+                    placeholder="Type a message..."
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                  />
+                  <button type="submit">Send</button>
+                </form>
+              </>
+            ) : (
+              <h3>Select a user to chat</h3>
+            )}
           </div>
         </div>
       )}
@@ -251,4 +236,9 @@ function App() {
   );
 }
 
-export default App;
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);  
